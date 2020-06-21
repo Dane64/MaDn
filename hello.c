@@ -70,9 +70,10 @@ typedef enum tEnumGameState
     Waiting,
     ThrowingDice,
     ThrewHighestPips,
-    SummoningPlayer,
+    SummoningPawn,
     PickingPawn,
-    MovingPlayer,
+    MovingPawn,
+    AnimatingPawn,
     EndingTurn
 } tEnumGameState;
 
@@ -311,19 +312,18 @@ void RemovePlayer(tStGame *stGame, tStPosition stNewPos)
     stGame->Field[stPos.uiRowIndex][stPos.uiColIndex].eData = stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex].eData;
 }
 
-bool CheckHit(tStGame *stGame, tStPosition stNewPos, tStPosition stOldPos)
+tStPosition CheckHit(tStGame *stGame, tStPosition stNewPos, tStPosition stOldPos)
 {
-    bool xHit = false;
+    tStPosition stPos = stNewPos;
 
     if (stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex].eData % POFF == 0){ // Modulus of POFF means it hit one of the four players
         RemovePlayer(stGame, stNewPos); // Place the hitted player back in the starting pos
-        xHit = true;
     }
 
-    stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex].eData = stGame->eTurn; // Set current player to the new pos
+    // stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex].eData = stGame->eTurn; // Set current player to the new pos
     stGame->Field[stOldPos.uiRowIndex][stOldPos.uiColIndex].eData = Empty; // Remove old traces of the current player
 
-    return xHit;
+    return stPos;
 }
 
 void SwitchPlayer(tStGame *stGame)
@@ -356,50 +356,49 @@ tStPosition SummonPawn(tStGame *stGame)
     return stPos;
 }
 
-bool IsPawnOnField(tStGame *stGame)
+unsigned short GetNumberOfSummonedPawns(tStGame *stGame)
 {
+    unsigned short uiCount = 0;
+
     for (int i=0; i<stGame->uiFieldHeight; i++){
         for (int j=0; j<stGame->uiFieldWidth; j++){
             if (((i>3 && i<7) || (j>3 && j<7)) && stGame->Field[i][j].eData == stGame->eTurn){
                 if (j != stGame->uiFieldWidth/2 && i != stGame->uiFieldHeight/2){ // Exclude (home positions) out of check
-                    return true;
+                    uiCount++;
                 } else if ((i == stGame->uiFieldHeight/2 && (j == 0 || j == stGame->uiFieldWidth-1)) || (j == stGame->uiFieldWidth/2 && (i == 0 || i == stGame->uiFieldHeight-1))){ // The edges of the excluded area hold valid pawn locations
-                    return true;
+                    uiCount++;
                 }
             }
         }
     }
 
-    return false;
+    return uiCount;
 }
 
-bool SetPlayerInHome(tStGame *stGame, tStPosition stNewPos)
+tStPosition SetPlayerInHome(tStGame *stGame, tStPosition stNewPos)
 {
+    tStPosition stPos = stNewPos;
     unsigned short uiMoves = stNewPos.uiMovesLeft > 4 ? stNewPos.uiMovesLeft - (stNewPos.uiMovesLeft%4)*2 : stNewPos.uiMovesLeft;
 
     if (stGame->eTurn == PlayerOne){
         if (stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex+uiMoves].eData == PlayerOneHome){
-            stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex+uiMoves].eData = PlayerOne;
-            return true;
+            stPos.uiColIndex = stNewPos.uiColIndex+uiMoves; stPos.uiMovesLeft = 0;
         }
     } else if (stGame->eTurn == PlayerTwo){
         if (stGame->Field[stNewPos.uiRowIndex-uiMoves][stNewPos.uiColIndex].eData == PlayerTwoHome){
-            stGame->Field[stNewPos.uiRowIndex-uiMoves][stNewPos.uiColIndex].eData = PlayerTwo;
-            return true;
+            stPos.uiRowIndex = stNewPos.uiRowIndex-uiMoves; stPos.uiMovesLeft = 0;
         }
     } else if (stGame->eTurn == PlayerThree){
         if (stGame->Field[stNewPos.uiRowIndex+uiMoves][stNewPos.uiColIndex].eData == PlayerThreeHome){
-            stGame->Field[stNewPos.uiRowIndex+uiMoves][stNewPos.uiColIndex].eData = PlayerThree;
-            return true;
+            stPos.uiRowIndex = stNewPos.uiRowIndex+uiMoves; stPos.uiMovesLeft = 0;
         }
     } else if (stGame->eTurn == PlayerFour){
         if (stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex-uiMoves].eData == PlayerFourHome){
-            stGame->Field[stNewPos.uiRowIndex][stNewPos.uiColIndex-uiMoves].eData = PlayerFour;
-            return true;
+            stPos.uiColIndex = stNewPos.uiColIndex-uiMoves; stPos.uiMovesLeft = 0;
         }
     }
 
-    return false;
+    return stPos;
 }
 
 bool CheckWinner(tStGame *stGame)
@@ -422,10 +421,82 @@ bool CheckWinner(tStGame *stGame)
     return true;
 }
 
+unsigned short GetDistToHomePos(tStGame *stGame, tStPosition stOldPos)
+{
+    tStPosition stNewPos = MovePawn(stGame, stOldPos.uiRowIndex, stOldPos.uiColIndex, 8*stGame->uiFieldWidth / 2); // 8 * 5 is maximum amount of steps possible
+    return 8*stGame->uiFieldWidth / 2 - stNewPos.uiMovesLeft;
+}
+
+tStPosition PickPawnComputer(tStGame *stGame, unsigned short uiDice)
+{
+    tStPosition astPos[4];
+    tStPosition stBestPos = {-1, -1, 0};
+    unsigned short n = 0;
+    unsigned short uiDist = 9999;
+
+    // Get all the pawns that are on the board
+    for (int i=0; i<stGame->uiFieldHeight; i++){
+        for (int j=0; j<stGame->uiFieldWidth; j++){
+            if (((i>3 && i<7) || (j>3 && j<7)) && stGame->Field[i][j].eData == stGame->eTurn){
+                if (j != stGame->uiFieldWidth/2 && i != stGame->uiFieldHeight/2){ // Exclude (home positions) out of check
+                    astPos[n].uiRowIndex = i; astPos[n].uiColIndex = j;
+                    n++;
+                } else if ((i == stGame->uiFieldHeight/2 && (j == 0 || j == stGame->uiFieldWidth-1)) || (j == stGame->uiFieldWidth/2 && (i == 0 || i == stGame->uiFieldHeight-1))){ // The edges of the excluded area hold valid pawn locations
+                    astPos[n].uiRowIndex = i; astPos[n].uiColIndex = j;
+                    n++;
+                }
+            }
+        }
+    }
+
+    // Find out what pawn has to walk the shortest distance to the home pos
+    unsigned short k[4] = {99, 99, 99, 99};
+    for (int i=0; i<GetNumberOfSummonedPawns(stGame); i++){
+        k[i] = GetDistToHomePos(stGame, astPos[i]);
+        if(k[i] < uiDist){
+            uiDist = k[i];
+            stBestPos.uiRowIndex = astPos[i].uiRowIndex; stBestPos.uiColIndex = astPos[i].uiColIndex;
+        }
+    }
+
+    // If computer is able to hit pawn which is not his own, hit that pawn OR If pawn cannot enter the home pos because of incorrect pips choose other pawn to move
+    for (int i=0; i<GetNumberOfSummonedPawns(stGame); i++){
+        tStPosition stTemp = MovePawn(stGame, astPos[i].uiRowIndex, astPos[i].uiColIndex, uiDice);
+        if(stGame->Field[stTemp.uiRowIndex][stTemp.uiColIndex].eData % POFF == 0 && stTemp.uiMovesLeft == 0){ // Modulus of POFF means it hit one of the four players){
+            if(stGame->Field[stTemp.uiRowIndex][stTemp.uiColIndex].eData != stGame->eTurn){
+                stBestPos.uiRowIndex = astPos[i].uiRowIndex; stBestPos.uiColIndex = astPos[i].uiColIndex;
+            }
+        } else{
+            tStPosition stTemp2 = SetPlayerInHome(stGame, stTemp);
+            if (stTemp2.uiMovesLeft != 0){ // Pawn cannot enter home pos find second closest pawn to home pos
+                unsigned short uiTemp1 = 9999;
+                unsigned short uiTemp2 = 9999;
+                for (int i=0; i<GetNumberOfSummonedPawns(stGame); i++){
+                    if(k[i] <= uiTemp1){
+                        uiTemp2 = uiTemp1;
+                        uiTemp1 = k[i];
+                    } else if(k[i] <= uiTemp2){
+                        uiTemp2 = k[i];
+                    }
+                }
+                for (int i=0; i<GetNumberOfSummonedPawns(stGame); i++){
+                    if(k[i] == uiTemp2){
+                        stBestPos.uiRowIndex = astPos[i].uiRowIndex; stBestPos.uiColIndex = astPos[i].uiColIndex;
+                    }
+                }
+            }
+        }
+    }
+
+    return stBestPos;
+}
+
 int main(void)
 {
 	vita2d_init();
     startInput();
+    bool xAniDone = true;
+    bool xAniInit = false;
     unsigned short uiDice = 0;
     unsigned short uiI = 0;
     unsigned short uiJ = 0;
@@ -435,6 +506,8 @@ int main(void)
     SceDateTime Time;
     tStGame stGame;
     stGamePad stMcd;
+    tStPosition stPos = {-1, -1, 0};
+    tStPosition stAniPos = {-1, -1, 0};   
     stGame.eTurn = PlayerOne;
     sceRtcGetCurrentClockLocalTime(&Time);
     srand(sceRtcGetMicrosecond(&Time));
@@ -490,7 +563,7 @@ int main(void)
 
             case Waiting:
                 uiDice = 0;
-                if (stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger){
+                if (stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger || stGame.eTurn != PlayerOne){
                     eGameplayState = ThrowingDice;
                 }
                 break;
@@ -503,7 +576,7 @@ int main(void)
                 if (uiDice == 6 && uiNrOfMaxPips%2 == 0){ // Player threw 6
                     eGameplayState = ThrewHighestPips; // Check if player is alllowed to move pawn or summon new one
                 } else if (uiNrOfMaxPips%2 == 1 && stGame.Field[stNewPos.uiRowIndex][stNewPos.uiColIndex].eData == stGame.eTurn){ // Player already summoned new pawn
-                    eGameplayState = MovingPlayer; // Force player to move the summoned pawn
+                    eGameplayState = MovingPawn; // Force player to move the summoned pawn
                     uiI = stNewPos.uiRowIndex; // Set row index to summoned pawn location
                     uiJ = stNewPos.uiColIndex; // Set col index to summoned pawn location
                 }
@@ -515,49 +588,74 @@ int main(void)
                 stOldPos = CheckStartPos(&stGame, stGame.eTurn, false);
 
                 if (stOldPos.uiColIndex <= stGame.uiFieldWidth){
-                    eGameplayState = SummoningPlayer;
+                    eGameplayState = SummoningPawn;
                 }
                 break;
 
-            case SummoningPlayer:
-                eGameplayState = Waiting;
+            case SummoningPawn:
+                eGameplayState = AnimatingPawn;
+                xAniInit = true;
                 stOldPos = CheckStartPos(&stGame, stGame.eTurn, false);
                 stNewPos = SummonPawn(&stGame);
 
-                CheckHit(&stGame, stNewPos, stOldPos);
+                stPos = CheckHit(&stGame, stNewPos, stOldPos);
                 uiNrOfMaxPips++;
                 break;
 
             case PickingPawn:
-                stOldPos = ChoosePawn(&stGame, uiI, uiJ);
+                if (stGame.eTurn == PlayerOne){
+                    stOldPos = ChoosePawn(&stGame, uiI, uiJ);
 
-                if ((stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger) && stOldPos.uiColIndex > stGame.uiFieldWidth){
-                    vita2d_draw_rectangle(0, 0, WIDTH, HEIGHT, RED);
-                } else if (stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger){
-                    eGameplayState = MovingPlayer;
+                    if ((stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger) && stOldPos.uiColIndex > stGame.uiFieldWidth){
+                        vita2d_draw_rectangle(0, 0, WIDTH, HEIGHT, RED);
+                    } else if (stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger){
+                        eGameplayState = MovingPawn;
+                    }
+
+                } else{
+                    eGameplayState = MovingPawn;
+                    stOldPos = PickPawnComputer(&stGame, uiDice);
+                    if (stOldPos.uiColIndex <= stGame.uiFieldWidth){
+                        uiI = stOldPos.uiRowIndex;
+                        uiJ = stOldPos.uiColIndex;
+                    }
                 }
-
-                if (!IsPawnOnField(&stGame)){
+                
+                if (GetNumberOfSummonedPawns(&stGame) == 0){
                     eGameplayState = EndingTurn;
                 }
                 
                 break;
 
-            case MovingPlayer:
-                eGameplayState = uiDice == 6 ? Waiting : EndingTurn;
+            case MovingPawn:
+                eGameplayState = AnimatingPawn;
                 uiNrOfMaxPips++;
+                xAniInit = true;
 
                 stOldPos = ChoosePawn(&stGame, uiI, uiJ);
                 stNewPos = MovePawn(&stGame, stOldPos.uiRowIndex, stOldPos.uiColIndex, uiDice);
 
                 if (stNewPos.uiMovesLeft == 0){
-                    CheckHit(&stGame, stNewPos, stOldPos);
-                } else {
-                    if (SetPlayerInHome(&stGame, stNewPos)){
+                    stPos = CheckHit(&stGame, stNewPos, stOldPos);
+                } else{
+                    stPos = SetPlayerInHome(&stGame, stNewPos);
+                    if (stPos.uiMovesLeft == 0){
                         stGame.Field[stOldPos.uiRowIndex][stOldPos.uiColIndex].eData = Empty; // Remove old traces of the current player
+                    } else{
+                        stPos = stOldPos; // Move is impossible do not move player
                     }
                 }
 
+                break;
+
+            case AnimatingPawn:
+                xAniInit = false;
+
+                if (xAniDone){
+                    eGameplayState = uiDice == 6 ? Waiting : EndingTurn;
+                    stPos.uiColIndex = -1;
+                    stPos.uiRowIndex = -1;
+                }
                 break;
 
             case EndingTurn:
@@ -568,6 +666,15 @@ int main(void)
 
             default :
                 break;
+            }
+        } else{
+            if(stMcd.stButt[2].xTrigger){
+                BoardDestructor(&stGame);
+                BoardConstructor(&stGame);
+                BoardInitializer(&stGame);
+                sceRtcGetCurrentClockLocalTime(&Time);
+                srand(sceRtcGetMicrosecond(&Time));
+                eGameplayState = Waiting;
             }
         }
 
@@ -637,6 +744,42 @@ int main(void)
                 }
 			}
 		}
+
+        // Animate Pawn
+        if (stPos.uiColIndex <= stGame.uiFieldWidth){
+            static float rPosX;
+            static float rPosY;
+            static float rPsi;
+
+            if (xAniInit){
+                stAniPos = stOldPos;
+                rPosX = stGame.Field[stAniPos.uiRowIndex][stAniPos.uiColIndex].uiX;
+                rPosY = stGame.Field[stAniPos.uiRowIndex][stAniPos.uiColIndex].uiY;
+                rPsi = atan2f((stGame.Field[stPos.uiRowIndex][stPos.uiColIndex].uiY-stGame.Field[stAniPos.uiRowIndex][stAniPos.uiColIndex].uiY),(stGame.Field[stPos.uiRowIndex][stPos.uiColIndex].uiX-stGame.Field[stAniPos.uiRowIndex][stAniPos.uiColIndex].uiX));
+            }
+
+            float rAniSpeed = 2.5; // 2.5 pixels per frame is approximately 150 pixels per sec
+            float rDist = sqrtf(powf(stGame.Field[stPos.uiRowIndex][stPos.uiColIndex].uiX-rPosX, 2) + powf(stGame.Field[stPos.uiRowIndex][stPos.uiColIndex].uiY-rPosY, 2));
+            rPosX += rAniSpeed * cosf(rPsi);
+            rPosY += rAniSpeed * sinf(rPsi);
+
+            if (stGame.eTurn == PlayerOne){
+                vita2d_draw_fill_circle(rPosX, rPosY, stGame.uiCellHeight/2*90/100, RED);
+            } else if (stGame.eTurn == PlayerTwo){
+                vita2d_draw_fill_circle(rPosX, rPosY, stGame.uiCellHeight/2*90/100, YELLOW);
+            } else if (stGame.eTurn == PlayerThree){
+                vita2d_draw_fill_circle(rPosX, rPosY, stGame.uiCellHeight/2*90/100, BLUE);
+            } else if (stGame.eTurn == PlayerFour){
+                vita2d_draw_fill_circle(rPosX, rPosY, stGame.uiCellHeight/2*90/100, GREEN);
+            }
+            
+            if (rDist < rAniSpeed){
+                stGame.Field[stPos.uiRowIndex][stPos.uiColIndex].eData = stGame.eTurn; // Set current player to the new pos
+                xAniDone = true;
+            } else{
+                xAniDone = false;
+            }
+        }
 
 		vita2d_wait_rendering_done();
 		vita2d_end_drawing();
