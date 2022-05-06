@@ -609,8 +609,16 @@ int main(void)
                     if ((stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger) && stOldPos.uiColIndex > stGame.uiFieldWidth){
                         vita2d_draw_rectangle(0, 0, WIDTH, HEIGHT, RED);
                     } else if (stMcd.stButt[1].xTrigger || stMcd.stTouch[0].xTrigger){
-                        eGameplayState = MovingPawn;
+
+                        tStPosition stTemp = MovePawn(&stGame, stOldPos.uiRowIndex, stOldPos.uiColIndex, uiDice);
+                        tStPosition stTemp2 = SetPlayerInHome(&stGame, stTemp);
+                        if (stTemp2.uiMovesLeft != 0){ // Pawn cannot enter home pos find second closest pawn to home pos
+                            vita2d_draw_rectangle(0, 0, WIDTH, HEIGHT, RED);
+                        } else{
+                            eGameplayState = MovingPawn;
+                        }    
                     }
+
 
                 } else{
                     eGameplayState = MovingPawn;
